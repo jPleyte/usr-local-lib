@@ -40,6 +40,7 @@ public class VcfDuplicateVariantFinder {
 	private static final Logger log = BootstrapLogger.configureLogger(VcfDuplicateVariantFinder.class.getName());
 	private Set<String> duplicates = null;
 	private Duration duration;
+	private int records=0; 
 
 	/**
 	 * Parse command line arguments and run duplicate variant finder
@@ -177,9 +178,11 @@ public class VcfDuplicateVariantFinder {
 		log.info("Reading " + vcfFile);
 		try (VCFFileReader vcfFileReader = new VCFFileReader(vcfFile)) {
 
-			// TODO make this parallel
-			duplicates = vcfFileReader.iterator().stream()
-					// .parallel() // Parallel causes a heap exception
+			// Processing the iterator using a parallel stream doesn't have much of a speed improvement
+			// and for large vcfs (like gnomad exomes) an out of memory heap exception is thrown.  
+			duplicates = vcfFileReader.iterator()
+					.stream()
+//					.parallel() // Parallel causes a heap exception
 					.map(this::mapToGenotype)
 					.filter(n -> !allGenotypes.add(n)) // Set.add() returns false if the item was already in the set.
 					.collect(Collectors.toSet());
@@ -198,9 +201,13 @@ public class VcfDuplicateVariantFinder {
 	private void printSummary() {
 		log.info(String.format("Time: %dm.%ds.%dms", duration.toMinutesPart(), duration.toSecondsPart(),
 				duration.toMillisPart()));
+		log.info("Number of records: " + records);
 		log.info("Number of duplicates: " + duplicates.size());
 
-		log.info("First duplicate: " + duplicates.stream().findFirst().orElse("n/a"));
+		if(!duplicates.isEmpty()) {
+			log.info("First duplicate: " + duplicates.stream().findFirst().orElse("n/a"));	
+		}
+		
 
 	}
 
@@ -232,6 +239,7 @@ public class VcfDuplicateVariantFinder {
 
 		String genotype = chromosome + "-" + position + "-" + reference + "-" + alternate;
 
+		records = records + 1;
 		return genotype;
 	}
 
