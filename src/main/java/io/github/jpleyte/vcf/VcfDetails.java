@@ -2,7 +2,9 @@ package io.github.jpleyte.vcf;
 
 import java.io.File;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -14,7 +16,6 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.time.StopWatch;
 
 import htsjdk.variant.variantcontext.Allele;
@@ -23,25 +24,31 @@ import htsjdk.variant.vcf.VCFFileReader;
 import io.github.jpleyte.log.BootstrapLogger;
 
 /**
- * Check an unsorted VCF file for duplicates.
- * Inteneded to be faster than ``grep -v "^#" your.vcf | cut -f 1,2,4,5 | sort| uniq -c | sort -rn``
+ * Analyse a VCF by running a set of functions on each line. 
  * 
  * To Do:
+ * - Try using HTSLib instead of HtsJdk
+ * - Use multiple threads  
  * - Add support for file input via stdio
  * - Add support for bgz index
- * - Provide benchmark comparison to other methods
- * - allow user to specify what is expected to be unique - the ID or the genotype (default)
+ * - allow user to specify what is expected to be unique (ie just the ID or the genotype, or everything)
  * 
  * @author j
  *
  */
-public class VcfDuplicateVariantFinder {
+public class VcfDetails {
 
-	private static final Logger log = BootstrapLogger.configureLogger(VcfDuplicateVariantFinder.class.getName());
-	private Set<String> duplicates = null;
+	private static final Logger log = BootstrapLogger.configureLogger(VcfDetails.class.getName());
+	private static final int STATUS_UPDATE_FREQUENCY = 500000000;
+	private CommandLine commandLine = null;
 	private Duration duration;
 	private int records=0; 
 
+	private Set<String> duplicates = new HashSet<>();
+	private final Set<String> allGenotypes = new HashSet<>();
+	
+	private final Map<String, String> multiAllelicAlternates = new HashMap<>();
+	
 	/**
 	 * Parse command line arguments and run duplicate variant finder
 	 * 
@@ -50,7 +57,7 @@ public class VcfDuplicateVariantFinder {
 	public static void main(String[] args) {
 
 		Options commandLineOptions = getCommandLineOptions();
-		CommandLine commandLine = null;
+		CommandLine commandLine=null;
 		try {
 			commandLine = parseCommandLine(args, commandLineOptions);
 		} catch (ParseException e) {
@@ -73,20 +80,8 @@ public class VcfDuplicateVariantFinder {
 			System.exit(2);
 		}
 
-		// check the filename extension
-		String extension = FilenameUtils.getExtension(vcfFile.getAbsolutePath());
-		boolean isCompressed = false;
-		if (extension.equals("vcf")) {
-			isCompressed = false;
-		} else if (extension.equals("gz") || extension.equals("bgz")) {
-			isCompressed = true;
-		} else {
-			log.severe("Unrecognised file type, expecting vcf, gz, or bgz.");
-			System.exit(3);
-		}
-
-		VcfDuplicateVariantFinder vcfDuplicateVariantFinder = new VcfDuplicateVariantFinder();
-		vcfDuplicateVariantFinder.processVcfFile(vcfFile, isCompressed);
+		VcfDetails vcfDuplicateVariantFinder = new VcfDetails();
+		vcfDuplicateVariantFinder.processVcfFile(vcfFile, commandLine);
 
 		if (!"false".equals(commandLine.getOptionValue("s"))) {
 			vcfDuplicateVariantFinder.printSummary();
@@ -116,7 +111,7 @@ public class VcfDuplicateVariantFinder {
 	 */
 	private static void printHelp(Options options) {
 		HelpFormatter formatter = new HelpFormatter();
-		formatter.printHelp(VcfDuplicateVariantFinder.class.getSimpleName(), "Find duplicate variants in VCF", options,
+		formatter.printHelp(VcfDetails.class.getSimpleName(), "Find duplicate variants in VCF", options,
 				"");
 
 	}
@@ -149,15 +144,19 @@ public class VcfDuplicateVariantFinder {
 		options.addOption(Option.builder("s")
 				.argName("summary")
 				.longOpt("summary")
-				.hasArg()
 				.desc("Print summary after processing is complete (default=true)")
 				.build());
 
 		options.addOption(Option.builder("d")
 				.argName("showDuplicates")
 				.longOpt("showDuplicates")
-				.hasArg()
 				.desc("Print all duplicates (default=false)")
+				.build());
+		
+		options.addOption(Option.builder("u")
+				.argName("showUpdates")
+				.longOpt("showUpdates")
+				.desc("Provide reassurance while processing large files (default=false)")
 				.build());
 
 		return options;
@@ -169,27 +168,72 @@ public class VcfDuplicateVariantFinder {
 	 * @param isCompressed
 	 * - ignored because the VCFFileReader can handle both types anyway.
 	 */
-	private void processVcfFile(File vcfFile, boolean isCompressed) {
+	private void processVcfFile(File vcfFile, CommandLine commandLine) {
+		this.commandLine = commandLine;
+		
 		StopWatch stopWatch = new StopWatch();
 		stopWatch.start();
 
-		Set<String> allGenotypes = new HashSet<>();
-
 		log.info("Reading " + vcfFile);
 		try (VCFFileReader vcfFileReader = new VCFFileReader(vcfFile)) {
-
-			// Processing the iterator using a parallel stream doesn't have much of a speed improvement
-			// and for large vcfs (like gnomad exomes) an out of memory heap exception is thrown.  
-			duplicates = vcfFileReader.iterator()
-					.stream()
-//					.parallel() // Parallel causes a heap exception
-					.map(this::mapToGenotype)
-					.filter(n -> !allGenotypes.add(n)) // Set.add() returns false if the item was already in the set.
-					.collect(Collectors.toSet());
+			vcfFileReader.iterator()
+				.stream()
+				.forEach(this::analyse);
 		}
 
 		stopWatch.stop();
 		duration = Duration.ofMillis(stopWatch.getTime());
+	}
+
+	/**
+	 * Run each analysis function on the current VariantContext
+	 * @param vc
+	 */
+	private void analyse(VariantContext vc) {
+		countRecords();
+		
+		if(!"false".equals(commandLine.getOptionValue("updates"))) {
+			printStatusUpdate(vc);	
+		}
+		
+		checkForDuplicate(vc);
+	
+		checkForMultiAllelicAlternate(vc);
+	}
+	
+	/**
+	 * 
+	 * @param vc
+	 */
+	private void checkForMultiAllelicAlternate(VariantContext vc) {
+		if(vc.getAlternateAlleles().size() > 1) {
+			multiAllelicAlternates.put(mapToGenotype(vc), 
+					vc.getAlternateAlleles().stream()
+						.map(Allele::getBaseString)
+						.collect(Collectors.joining(", ")));
+		}
+		
+	}
+	
+	/**
+	 * Print a status message after processing every nth record
+	 * @param vc
+	 */
+	private void printStatusUpdate(VariantContext vc) {
+		if(records % STATUS_UPDATE_FREQUENCY == 0 && records > 0) {
+			log.info("Processing record " + records+", contig="+vc.getContig());
+		}
+	}
+
+	private void checkForDuplicate(VariantContext vc) {
+		String genotype = mapToGenotype(vc);
+		if(!allGenotypes.add(genotype)) {
+			duplicates.add(genotype);
+		}
+	}
+
+	private void countRecords() {
+		records = records + 1;
 	}
 
 	/**
@@ -203,12 +247,16 @@ public class VcfDuplicateVariantFinder {
 				duration.toMillisPart()));
 		log.info("Number of records: " + records);
 		log.info("Number of duplicates: " + duplicates.size());
-
+		log.info("Number of multiallelic alts: " + multiAllelicAlternates.size());
+		
 		if(!duplicates.isEmpty()) {
 			log.info("First duplicate: " + duplicates.stream().findFirst().orElse("n/a"));	
 		}
 		
-
+		if(!multiAllelicAlternates.isEmpty()) {
+			Map.Entry<String,String> alt = multiAllelicAlternates.entrySet().stream().findFirst().orElse(null);
+			log.info("First multiallelic alt: " + alt.getKey()+" " + alt.getValue());
+		}
 	}
 
 	/**
@@ -218,6 +266,7 @@ public class VcfDuplicateVariantFinder {
 		log.info("Duplicates: ");
 		duplicates.stream().forEach(log::info);
 	}
+	
 	/**
 	 * Return a string representation of the variant
 	 * 
@@ -228,10 +277,8 @@ public class VcfDuplicateVariantFinder {
 		String chromosome = vc.getContig();
 		int position = vc.getStart();
 
-		// TODO This needs to be verified and unit tests needed
 		String reference = vc.getReference().getDisplayString();
 
-		// TODO It would be preferable if you added each alt allele to the map individually rather than combining them
 		String alternate = vc.getAlternateAlleles().stream()
 				.map(Allele::getDisplayString)
 				.sorted()
@@ -239,7 +286,6 @@ public class VcfDuplicateVariantFinder {
 
 		String genotype = chromosome + "-" + position + "-" + reference + "-" + alternate;
 
-		records = records + 1;
 		return genotype;
 	}
 
