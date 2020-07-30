@@ -146,7 +146,7 @@ public class VcfDetailsTask implements Runnable {
         if (vc.getAlternateAlleles().size() > 1) {
             vcfDetailsModel.getNumberOfVariantsWithMultiAllelicAlternates().incrementAndGet();
             if (printMultiAllelicAlternates) {
-                log.info("Multiallelic alt: " + genotypes);
+                log.info("Multiallelic alt at " + mapToGenotype(vc));
             }
         }
     }

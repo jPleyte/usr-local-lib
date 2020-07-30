@@ -100,6 +100,7 @@ public class VcfDetails {
             VcfDetailsTask vdr = new VcfDetailsTask(chromosome, details, vcfFile);
             vdr.setPrintStatusUpdates(commandLine.hasOption("showUpdates"));
             vdr.setPrintDuplicates(commandLine.hasOption("showDuplicates"));
+            vdr.setPrintMultiAllelicAlternates(commandLine.hasOption("showMultiallelicAlts"));
             pool.execute(vdr);
         }
 
@@ -136,6 +137,7 @@ public class VcfDetails {
             System.exit(1);
         }
 
+        // Se the number of threads
         if (commandLine.hasOption("threads")) {
             String digits = commandLine.getOptionValue("threads");
             if(!NumberUtils.isDigits(digits)) {
@@ -224,6 +226,12 @@ public class VcfDetails {
                 .longOpt("threads")
                 .hasArg()
                 .desc("Specifies the number of threads to run (default="+DEFAULT_NUMBER_OF_THREADS+")")
+                .build());
+
+        options.addOption(Option.builder("m")
+                .argName("showMultiallelicAlts")
+                .longOpt("showMultiallelicAlts")
+                .desc("Print all multiallelic alternates (default=false)")
                 .build());
 
         return options;
