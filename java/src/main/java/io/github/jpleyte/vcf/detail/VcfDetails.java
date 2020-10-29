@@ -22,12 +22,13 @@ import io.github.jpleyte.log.BootstrapLogger;
 /**
  * Analyse a VCF by running a set of functions on each line.
  *
- * To Do:
- * - [ ] Try using HTSLib instead of HtsJdk
- * - [x] Use multiple threads
- * - [ ] Add support for file input via stdio
- * - [ ] Add support for bgz index
- * - [ ] allow user to specify what is expected to be unique (ie just the ID or the genotype, or everything)
+ * To Do: - 
+ * - [ ] Try using HTSLib instead of HtsJdk 
+ * - [x] Use multiple threads 
+ * - [ ] Add support for file input via stdio 
+ * - [ ] Add support for bgz index 
+ * - [ ] allow user to specify what is expected to be unique (ie just the ID or the genotype, or everything) 
+ * - [ ] Add option to determine if vcf is sorted (probably can't be multi-threaded)
  *
  * @author j
  *
