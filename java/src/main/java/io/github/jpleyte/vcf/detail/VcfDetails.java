@@ -6,6 +6,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -17,6 +18,9 @@ import org.apache.commons.cli.ParseException;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.time.StopWatch;
 
+import htsjdk.samtools.util.CloseableIterator;
+import htsjdk.variant.variantcontext.VariantContext;
+import htsjdk.variant.vcf.VCFFileReader;
 import io.github.jpleyte.log.BootstrapLogger;
 
 /**
@@ -29,7 +33,7 @@ import io.github.jpleyte.log.BootstrapLogger;
  * - [ ] Add support for bgz index 
  * - [ ] allow user to specify what is expected to be unique (ie just the ID or the genotype, or everything) 
  * - [ ] Add option to determine if vcf is sorted (probably can't be multi-threaded)
- *
+ * - [ ] Add more stats: Like N variants across N locations, counts by chromosome, presence/amount of duplicate alleles contexts, presence/amount of multiallelic sites, etc
  * @author j
  *
  */
@@ -37,8 +41,6 @@ public class VcfDetails {
 
     private static final Logger log = BootstrapLogger.configureLogger(VcfDetails.class.getName());
     private static final int DEFAULT_NUMBER_OF_THREADS = 2;
-    private static final String[] DEFAULT_CHROMOSOMES = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
-            "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X", "Y" };
     private int numberOfThreads;
     private File vcfFile;
     private CommandLine commandLine = null;
@@ -97,12 +99,16 @@ public class VcfDetails {
 
         VcfDetailsModel details = new VcfDetailsModel();
 
-        for (String chromosome : DEFAULT_CHROMOSOMES) {
-            VcfDetailsTask vdr = new VcfDetailsTask(chromosome, details, vcfFile);
-            vdr.setPrintStatusUpdates(commandLine.hasOption("showUpdates"));
-            vdr.setPrintDuplicates(commandLine.hasOption("showDuplicates"));
-            vdr.setPrintMultiAllelicAlternates(commandLine.hasOption("showMultiallelicAlts"));
-            pool.execute(vdr);
+        try (VCFFileReader vcfFileReader = new VCFFileReader(vcfFile, true);
+                CloseableIterator<VariantContext> iter = vcfFileReader.iterator()) {
+            while (iter.hasNext()) {
+                final VariantContext context = iter.next();
+                VcfDetailsTask vdr = new VcfDetailsTask(context, details);
+                vdr.setPrintStatusUpdates(commandLine.hasOption("showDuplicateGenotypes"));
+                vdr.setPrintDuplicateGenotypes(commandLine.hasOption("showDuplicateGenotypes"));
+                vdr.setPrintMultiAllelicAlternates(commandLine.hasOption("showMultiallelicAlts"));
+                pool.execute(vdr);
+            }
         }
 
         // Indicate that we are done adding tasks
@@ -211,9 +217,9 @@ public class VcfDetails {
                 .build());
 
         options.addOption(Option.builder("d")
-                .argName("showDuplicates")
-                .longOpt("showDuplicates")
-                .desc("Print all duplicates (default=false)")
+                .argName("showDuplicateGenotypes")
+                .longOpt("showDuplicateGenotypes")
+                .desc("Print all duplicate genotypes (default=false)")
                 .build());
 
         options.addOption(Option.builder("u")
@@ -251,7 +257,19 @@ public class VcfDetails {
         log.info(String.format("Time: %dm.%ds.%dms", duration.toMinutesPart(), duration.toSecondsPart(),
                 duration.toMillisPart()));
         log.info("Number of records: " + details.getNumberOfRecords());
-        log.info("Number of duplicates: " + details.getNumberOfDuplicates());
+        log.info("Number of duplicates: " + details.getNumberOfDuplicateGenotypes());
         log.info("Number of multiallelic alts: " + details.getNumberOfVariantsWithMultiAllelicAlternates());
+        log.info("Chromsome-variant counts: \n" + getChromosomeVariantCounts(details));
+    }
+
+    private String getChromosomeVariantCounts(VcfDetailsModel details) {
+        StringBuffer buffer = new StringBuffer();
+        buffer.append(String.join(",", details.getChromosomeCounts().keySet()));
+        buffer.append("\n");
+        buffer.append(String.join(",",
+                details.getChromosomeCounts().values().stream()
+                .map(String::valueOf)
+                .collect(Collectors.toList())));
+        return buffer.toString();
     }
 }

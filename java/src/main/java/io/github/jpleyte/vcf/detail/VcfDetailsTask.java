@@ -1,15 +1,12 @@
 package io.github.jpleyte.vcf.detail;
 
-import java.io.File;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
-import htsjdk.samtools.util.CloseableIterator;
 import htsjdk.variant.variantcontext.Allele;
 import htsjdk.variant.variantcontext.VariantContext;
-import htsjdk.variant.vcf.VCFFileReader;
 import io.github.jpleyte.log.BootstrapLogger;
 
 /**
@@ -22,44 +19,32 @@ public class VcfDetailsTask implements Runnable {
     private static final Logger log = BootstrapLogger.configureLogger(VcfDetailsTask.class.getName());
 
     private static final int STATUS_UPDATE_FREQUENCY = 500000000;
-    private static final int TWO_HUNDRED_FIFTY_MILLION = 250000000;
+
     private final Set<String> genotypes = new HashSet<>();
 
-    private File vcfFile;
-
-    final String chromosome;
     final VcfDetailsModel vcfDetailsModel;
+    final VariantContext variantContext;
 
     boolean printStatusUpdates = false;
-    boolean printDuplicates = false;
+    boolean printDuplicateGenotypes = false;
     boolean printMultiAllelicAlternates;
 
     /**
      * Constructor
-     *
-     * @param chromosome 1..X,Y
+     * 
+     * @param variantContext
      * @param details
      */
-    public VcfDetailsTask(String chromosome, VcfDetailsModel details, File vcfFile) {
-        this.chromosome = chromosome;
+    public VcfDetailsTask(VariantContext variantContext, VcfDetailsModel details) {
         this.vcfDetailsModel = details;
-        this.vcfFile = vcfFile;
+        this.variantContext = variantContext;
     }
 
     int lastPosition = 0;
 
     @Override
     public void run() {
-        log.fine("Processing chromosome " + chromosome);
-
-        try (VCFFileReader vcfFileReader = new VCFFileReader(vcfFile, true)) {
-
-            try (CloseableIterator<VariantContext> contigIterator = vcfFileReader.query(chromosome, 1,
-                    TWO_HUNDRED_FIFTY_MILLION)) {
-                // TODO try .parallel()
-                contigIterator.stream().forEach(this::analyse);
-            }
-        }
+        analyse(variantContext);
     }
 
     /**
@@ -68,13 +53,17 @@ public class VcfDetailsTask implements Runnable {
      * @param vc
      */
     private void analyse(VariantContext vc) {
+        if (vcfDetailsModel.incrementChromosomeVariantCount(vc.getContig())) {
+            log.info("Starting chromosome " + vc.getContig());
+        }
+
         countRecords();
 
         if (printStatusUpdates) {
             printStatusUpdate(vc);
         }
 
-        checkForDuplicate(vc);
+        checkForDuplicateGenotype(vc);
 
         checkForMultiAllelicAlternate(vc);
     }
@@ -102,7 +91,7 @@ public class VcfDetailsTask implements Runnable {
     }
 
     /**
-     * Keep track of how many rrecords are in the VCF
+     * Keep track of how many records are in the VCF
      */
     private void countRecords() {
         vcfDetailsModel.getNumberOfRecords().incrementAndGet();
@@ -126,12 +115,12 @@ public class VcfDetailsTask implements Runnable {
      *
      * @param vc
      */
-    private void checkForDuplicate(VariantContext vc) {
+    private void checkForDuplicateGenotype(VariantContext vc) {
         String genotype = mapToGenotype(vc);
         if (!genotypes.add(genotype)) {
-            vcfDetailsModel.getNumberOfDuplicates().incrementAndGet();
+            vcfDetailsModel.getNumberOfDuplicateGenotypes().incrementAndGet();
 
-            if (printDuplicates) {
+            if (printDuplicateGenotypes) {
                 log.info("Duplicate: " + genotype);
             }
         }
@@ -159,12 +148,12 @@ public class VcfDetailsTask implements Runnable {
         this.printStatusUpdates = printStatusUpdates;
     }
 
-    public boolean isPrintDuplicates() {
-        return printDuplicates;
+    public boolean isPrintDuplicateGenotypes() {
+        return printDuplicateGenotypes;
     }
 
-    public void setPrintDuplicates(boolean printDuplicates) {
-        this.printDuplicates = printDuplicates;
+    public void setPrintDuplicateGenotypes(boolean printDuplicateGenotypes) {
+        this.printDuplicateGenotypes = printDuplicateGenotypes;
     }
 
     public boolean isPrintMultiAllelicAlternates() {
