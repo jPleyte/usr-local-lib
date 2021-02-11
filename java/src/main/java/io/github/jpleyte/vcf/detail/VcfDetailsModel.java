@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
  */
 public class VcfDetailsModel {
     public static final String[] CHROMOSOMES = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
-            "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X", "Y" };
+            "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "MT", "X", "Y" };
 
     private AtomicInteger numberOfRecords = new AtomicInteger();
     private AtomicInteger numberOfDuplicateGenotypes = new AtomicInteger();

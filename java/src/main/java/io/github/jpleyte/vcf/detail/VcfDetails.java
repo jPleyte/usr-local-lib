@@ -41,6 +41,7 @@ public class VcfDetails {
 
     private static final Logger log = BootstrapLogger.configureLogger(VcfDetails.class.getName());
     private static final int DEFAULT_NUMBER_OF_THREADS = 2;
+    private static final String DELIMETER = "\t";
     private int numberOfThreads;
     private File vcfFile;
     private CommandLine commandLine = null;
@@ -99,7 +100,7 @@ public class VcfDetails {
 
         VcfDetailsModel details = new VcfDetailsModel();
 
-        try (VCFFileReader vcfFileReader = new VCFFileReader(vcfFile, true);
+        try (VCFFileReader vcfFileReader = new VCFFileReader(vcfFile, false);
                 CloseableIterator<VariantContext> iter = vcfFileReader.iterator()) {
             while (iter.hasNext()) {
                 final VariantContext context = iter.next();
@@ -244,8 +245,6 @@ public class VcfDetails {
         return options;
     }
 
-
-
     /**
      * Print summary showing how long it took to run and how many duplicates were found.
      * @param details
@@ -264,10 +263,19 @@ public class VcfDetails {
 
     private String getChromosomeVariantCounts(VcfDetailsModel details) {
         StringBuffer buffer = new StringBuffer();
-        buffer.append(String.join(",", details.getChromosomeCounts().keySet()));
+
+        // Sort the chromosomes so they are always displayed in the same order
+        buffer.append(String.join(DELIMETER,
+                details.getChromosomeCounts().keySet()
+                .stream()
+                .sorted()
+                .collect(Collectors.toList())));
         buffer.append("\n");
-        buffer.append(String.join(",",
-                details.getChromosomeCounts().values().stream()
+        buffer.append(String.join(DELIMETER,
+                details.getChromosomeCounts().keySet()
+                .stream()
+                .sorted()
+                .map(x -> details.getChromosomeCounts().get(x))
                 .map(String::valueOf)
                 .collect(Collectors.toList())));
         return buffer.toString();
